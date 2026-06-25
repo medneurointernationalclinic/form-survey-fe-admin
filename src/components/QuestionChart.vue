@@ -1,23 +1,11 @@
 <script setup>
 import { computed } from 'vue'
 import { Bar } from 'vue-chartjs'
-import {
-  Chart as ChartJS,
-  Title,
-  Tooltip,
-  Legend,
-  BarElement,
-  CategoryScale,
-  LinearScale,
-} from 'chart.js'
-import ChartDataLabels from 'chartjs-plugin-datalabels'
-
-ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale, ChartDataLabels)
 
 const props = defineProps({
   questionKey: { type: String, required: true },
   title: { type: String, required: true },
-  type: { type: String, default: 'single' },
+  type: { type: String, default: 'radio' },
   options: { type: Array, default: () => [] },
   totalResponses: { type: Number, default: 0 },
 })
@@ -26,6 +14,11 @@ const CHART_COLORS = [
   '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#16a34a',
   '#0891b2', '#ca8a04', '#dc2626', '#4f46e5', '#0d9488',
 ]
+
+const typeLabels = {
+  radio: 'Một lựa chọn',
+  checkbox: 'Nhiều lựa chọn',
+}
 
 const chartHeight = computed(() => Math.max(220, props.options.length * 52 + 60))
 
@@ -63,8 +56,14 @@ const chartOptions = computed(() => ({
     },
     tooltip: {
       callbacks: {
+        title(context) {
+          return context[0]?.label ?? ''
+        },
         label(context) {
-          return `${context.parsed.x}%`
+          const count = context.dataset.counts?.[context.dataIndex]
+          return count != null
+            ? `${context.parsed.x}% (${count} phản hồi)`
+            : `${context.parsed.x}%`
         },
       },
     },
@@ -79,10 +78,7 @@ const chartOptions = computed(() => ({
       grid: { color: '#e2e8f0' },
     },
     y: {
-      ticks: {
-        autoSkip: false,
-        font: { size: 11 },
-      },
+      ticks: { display: false },
       grid: { display: false },
     },
   },
@@ -92,10 +88,10 @@ const chartOptions = computed(() => ({
 <template>
   <article class="question-chart-card">
     <header class="question-chart-header">
-      <span class="question-key">{{ questionKey.toUpperCase() }}</span>
+      <!-- <span class="question-key">{{ questionKey.toUpperCase() }}</span> -->
       <h3 class="question-title">{{ title }}</h3>
       <div class="question-meta">
-        <span class="type-badge" :class="type">{{ type === 'multiple' ? 'Nhiều lựa chọn' : 'Một lựa chọn' }}</span>
+        <span class="type-badge radio">{{ typeLabels[type] || 'Một lựa chọn' }}</span>
         <span>{{ totalResponses }} phản hồi</span>
       </div>
     </header>
@@ -163,14 +159,9 @@ const chartOptions = computed(() => ({
   font-weight: 600;
 }
 
-.type-badge.single {
+.type-badge.radio {
   background: #f0fdf4;
   color: #15803d;
-}
-
-.type-badge.multiple {
-  background: #fef3c7;
-  color: #b45309;
 }
 
 .chart-wrapper {

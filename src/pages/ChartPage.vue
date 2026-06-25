@@ -1,44 +1,68 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { fetchAdminSurveys } from '../api/adminSurveys'
 import { fetchSurveyStats } from '../api/surveys'
-import { SURVEY_QUESTIONS } from '../constants/surveyQuestions'
-import { isTableQuestion } from '../constants/tableQuestions'
+import { normalizeStatsQuestionType, isTableQuestionType } from '../constants/questionTypes'
 import QuestionChart from '../components/QuestionChart.vue'
 import QuestionTable from '../components/QuestionTable.vue'
 
+const surveyOptions = ref([])
+const selectedSurveyId = ref('')
 const loading = ref(false)
+const surveysLoading = ref(false)
 const error = ref('')
 const totalResponses = ref(0)
-const questionsData = ref({})
-
-const questionKeys = computed(() =>
-  Array.from({ length: 26 }, (_, i) => `q${i + 1}`),
-)
+const questionsData = ref([])
 
 const chartItems = computed(() =>
-  questionKeys.value.map((key) => {
-    const question = questionsData.value[key]
-    return {
-      key,
-      title: SURVEY_QUESTIONS[key] || key,
-      type: question?.type || 'single',
-      options: question?.options || [],
-      totalResponses: question?.totalResponses ?? 0,
-      isTable: isTableQuestion(key),
-    }
-  }),
+  questionsData.value
+    .filter((question) => question.type !== 'textarea')
+    .map((question, index) => {
+      const type = normalizeStatsQuestionType(question.type)
+      return {
+        key: question.fieldKey ?? `q${index + 1}`,
+        title: question.question,
+        type,
+        options: question.options || [],
+        totalResponses: question.totalResponses ?? 0,
+        isTable: isTableQuestionType(question.type),
+      }
+    }),
 )
 
+async function loadSurveyOptions() {
+  surveysLoading.value = true
+  try {
+    const response = await fetchAdminSurveys(1, 100)
+    if (response.success) {
+      surveyOptions.value = response.data
+      if (!selectedSurveyId.value && response.data.length > 0) {
+        selectedSurveyId.value = response.data[0].id
+      }
+    }
+  } catch (err) {
+    error.value = err.response?.data?.message || err.message || 'Không thể tải danh sách phiếu'
+  } finally {
+    surveysLoading.value = false
+  }
+}
+
 async function loadStats() {
+  if (!selectedSurveyId.value) {
+    totalResponses.value = 0
+    questionsData.value = []
+    return
+  }
+
   loading.value = true
   error.value = ''
   try {
-    const response = await fetchSurveyStats()
+    const response = await fetchSurveyStats(selectedSurveyId.value)
     if (response.success) {
       totalResponses.value = response.data.totalResponses
-      questionsData.value = response.data.questions
+      questionsData.value = response.data.questions || []
     } else {
-      error.value = 'Không thể tải thống kê khảo sát'
+      error.value = response.message || 'Không thể tải thống kê khảo sát'
     }
   } catch (err) {
     error.value = err.response?.data?.message || err.message || 'Lỗi khi tải thống kê'
@@ -47,19 +71,49 @@ async function loadStats() {
   }
 }
 
-onMounted(() => loadStats())
+async function handleSurveyChange() {
+  await loadStats()
+}
+
+onMounted(async () => {
+  await loadSurveyOptions()
+  if (selectedSurveyId.value) {
+    await loadStats()
+  }
+})
 </script>
 
 <template>
   <div class="chart-page">
     <div class="page-heading">
-      <h2>Biểu đồ thống kê</h2>
-      <p class="subtitle">Tỉ lệ câu trả lời cho 26 câu hỏi khảo sát</p>
+      <div>
+        <h2>Biểu đồ thống kê</h2>
+        <p class="subtitle">Tỉ lệ câu trả lời theo phiếu khảo sát</p>
+      </div>
+
+      <label v-if="surveyOptions.length > 0" class="survey-picker">
+        <span>Phiếu khảo sát</span>
+        <select
+          v-model="selectedSurveyId"
+          :disabled="surveysLoading || loading"
+          @change="handleSurveyChange"
+        >
+          <option v-for="survey in surveyOptions" :key="survey.id" :value="survey.id">
+            {{ survey.title }}
+          </option>
+        </select>
+      </label>
     </div>
 
     <div v-if="error" class="alert alert-error">{{ error }}</div>
 
-    <div v-if="loading" class="loading-state">Đang tải biểu đồ...</div>
+    <div v-if="surveysLoading" class="loading-state">Đang tải danh sách phiếu...</div>
+
+    <div v-else-if="surveyOptions.length === 0" class="empty-state">
+      Chưa có phiếu khảo sát nào.
+    </div>
+
+    <div v-else-if="loading" class="loading-state">Đang tải biểu đồ...</div>
 
     <template v-else>
       <div class="stats-bar">
@@ -69,11 +123,15 @@ onMounted(() => loadStats())
         </div>
         <div class="stat-card">
           <span class="stat-label">Số câu hỏi</span>
-          <span class="stat-value">26</span>
+          <span class="stat-value">{{ chartItems.length }}</span>
         </div>
       </div>
 
-      <div class="chart-grid">
+      <div v-if="chartItems.length === 0" class="empty-state">
+        Chưa có dữ liệu thống kê cho phiếu này.
+      </div>
+
+      <div v-else class="chart-grid">
         <template v-for="item in chartItems" :key="item.key">
           <QuestionTable
             v-if="item.isTable"
@@ -99,7 +157,12 @@ onMounted(() => loadStats())
 
 <style scoped>
 .page-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .page-heading h2 {
@@ -112,6 +175,32 @@ onMounted(() => loadStats())
   font-size: 0.9rem;
 }
 
+.survey-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.survey-picker span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.survey-picker select {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.survey-picker select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
 .alert {
   padding: 12px 16px;
   border-radius: 8px;
@@ -122,9 +211,11 @@ onMounted(() => loadStats())
   background: var(--color-error-bg);
   color: var(--color-error-text);
   border: 1px solid #fecaca;
+  margin-bottom: 16px;
 }
 
-.loading-state {
+.loading-state,
+.empty-state {
   text-align: center;
   padding: 48px;
   color: var(--color-text-muted);

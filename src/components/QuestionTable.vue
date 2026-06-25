@@ -2,24 +2,32 @@
 defineProps({
   questionKey: { type: String, required: true },
   title: { type: String, required: true },
-  type: { type: String, default: 'single' },
+  type: { type: String, default: 'checkbox' },
   options: { type: Array, default: () => [] },
   totalResponses: { type: Number, default: 0 },
 })
+
+const typeLabels = {
+  checkbox: 'Nhiều lựa chọn',
+  textarea: 'Văn bản',
+  text: 'Văn bản',
+}
 </script>
 
 <template>
   <article class="question-chart-card question-table-card">
     <header class="question-chart-header">
-      <span class="question-key">{{ questionKey.toUpperCase() }}</span>
+      <!-- <span class="question-key">{{ questionKey.toUpperCase() }}</span> -->
       <h3 class="question-title">{{ title }}</h3>
       <div class="question-meta">
-        <span class="type-badge table">Bảng thống kê</span>
+        <span class="type-badge table">{{ typeLabels[type] || 'Bảng thống kê' }}</span>
         <span>{{ totalResponses }} phản hồi</span>
       </div>
     </header>
 
-    <div v-if="options.length === 0" class="chart-empty">Chưa có dữ liệu</div>
+    <div v-if="options.length === 0" class="chart-empty">
+      {{ type === 'textarea' || type === 'text' ? 'Câu hỏi văn bản tự do — không có thống kê lựa chọn' : 'Chưa có dữ liệu' }}
+    </div>
 
     <div v-else class="table-wrapper">
       <table class="stats-table">

@@ -23,6 +23,16 @@ const routes = [
         name: 'chart',
         component: () => import('../pages/ChartPage.vue'),
       },
+      {
+        path: 'survey-forms',
+        name: 'survey-forms',
+        component: () => import('../pages/SurveyFormsPage.vue'),
+      },
+      {
+        path: 'survey-forms/:surveyId/questions',
+        name: 'survey-questions',
+        component: () => import('../pages/SurveyQuestionsPage.vue'),
+      },
     ],
   },
 ]

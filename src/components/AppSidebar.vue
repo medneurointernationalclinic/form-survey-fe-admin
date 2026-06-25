@@ -7,6 +7,7 @@ const route = useRoute()
 const navItems = [
   { name: 'dashboard', label: 'Dashboard', to: '/', icon: '📋' },
   { name: 'chart', label: 'Chart', to: '/chart', icon: '📊' },
+  { name: 'survey-forms', label: 'Phiếu khảo sát', to: '/survey-forms', icon: '📝' },
 ]
 </script>
 

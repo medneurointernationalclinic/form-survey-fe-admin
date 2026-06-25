@@ -1,14 +1,21 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { fetchSurveys } from '../api/surveys'
-import { SURVEY_QUESTIONS } from '../constants/surveyQuestions'
+import { fetchAdminSurveys } from '../api/adminSurveys'
+import { fetchAdminQuestions } from '../api/adminQuestions'
+import { fetchSurveyResponses, fetchSurveyResponse } from '../api/surveys'
 
-const surveys = ref([])
-const PAGE_SIZE = 10
+const surveyOptions = ref([])
+const selectedSurveyId = ref('')
+const responses = ref([])
+const questionLabels = ref({})
+const PAGE_SIZE = 20
 const pagination = ref({ page: 1, limit: PAGE_SIZE, total: 0, totalPages: 1 })
 const loading = ref(false)
+const surveysLoading = ref(false)
 const error = ref('')
 const expandedId = ref(null)
+const expandedDetail = ref(null)
+const detailLoading = ref(false)
 
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleString('vi-VN')
@@ -19,26 +26,89 @@ function formatAnswer(value) {
   return value ?? '—'
 }
 
-function toggleExpand(id) {
-  expandedId.value = expandedId.value === id ? null : id
-}
+function getAnswerItems(response) {
+  const items = response?.answers?.items
+  if (Array.isArray(items)) {
+    return [...items].sort(
+      (a, b) => Number(a.fieldKey.slice(1)) - Number(b.fieldKey.slice(1)),
+    )
+  }
 
-function getQuestionKeys(survey) {
-  return Object.keys(survey)
+  return Object.keys(response || {})
     .filter((key) => key.startsWith('q'))
     .sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+    .map((key) => ({
+      fieldKey: key,
+      answer: response[key],
+      question: questionLabels.value[key] || key,
+    }))
 }
 
-async function loadSurveys(page = 1) {
+function getAnswerLabel(item) {
+  return questionLabels.value[item.fieldKey] || item.question || item.fieldKey
+}
+
+function getPreviewMeta(response) {
+  const previewKeys = ['q1', 'q2', 'q3']
+  const items = getAnswerItems(response)
+  const parts = previewKeys
+    .map((key) => items.find((item) => item.fieldKey === key)?.answer)
+    .filter(Boolean)
+    .map(formatAnswer)
+  return parts.join(' · ') || '—'
+}
+
+async function loadSurveyOptions() {
+  surveysLoading.value = true
+  try {
+    const response = await fetchAdminSurveys(1, 100)
+    if (response.success) {
+      surveyOptions.value = response.data
+      if (!selectedSurveyId.value && response.data.length > 0) {
+        selectedSurveyId.value = response.data[0].id
+      }
+    }
+  } catch (err) {
+    error.value = err.response?.data?.message || err.message || 'Không thể tải danh sách phiếu'
+  } finally {
+    surveysLoading.value = false
+  }
+}
+
+async function loadQuestionLabels() {
+  if (!selectedSurveyId.value) return
+
+  try {
+    const response = await fetchAdminQuestions(selectedSurveyId.value)
+    if (response.success) {
+      questionLabels.value = Object.fromEntries(
+        response.data.map((q) => [q.fieldKey, q.label]),
+      )
+    }
+  } catch {
+    questionLabels.value = {}
+  }
+}
+
+async function loadResponses(page = 1) {
+  if (!selectedSurveyId.value) {
+    responses.value = []
+    return
+  }
+
   loading.value = true
   error.value = ''
   try {
-    const response = await fetchSurveys(page, pagination.value.limit)
+    const response = await fetchSurveyResponses(
+      selectedSurveyId.value,
+      page,
+      pagination.value.limit,
+    )
     if (response.success) {
-      surveys.value = response.data
+      responses.value = response.data
       pagination.value = response.pagination
     } else {
-      error.value = 'Không thể tải dữ liệu khảo sát'
+      error.value = response.message || 'Không thể tải dữ liệu khảo sát'
     }
   } catch (err) {
     error.value = err.response?.data?.message || err.message || 'Lỗi khi tải dữ liệu'
@@ -47,68 +117,138 @@ async function loadSurveys(page = 1) {
   }
 }
 
+async function handleSurveyChange() {
+  expandedId.value = null
+  expandedDetail.value = null
+  await Promise.all([loadQuestionLabels(), loadResponses(1)])
+}
+
 function goToPage(page) {
   if (page < 1 || page > pagination.value.totalPages || page === pagination.value.page) return
   expandedId.value = null
-  loadSurveys(page)
+  expandedDetail.value = null
+  loadResponses(page)
 }
 
-onMounted(() => loadSurveys())
+async function toggleExpand(id) {
+  if (expandedId.value === id) {
+    expandedId.value = null
+    expandedDetail.value = null
+    return
+  }
+
+  expandedId.value = id
+  const fromList = responses.value.find((r) => r.id === id)
+  if (fromList?.answers?.items) {
+    expandedDetail.value = fromList
+    return
+  }
+
+  expandedDetail.value = null
+  detailLoading.value = true
+  try {
+    const response = await fetchSurveyResponse(selectedSurveyId.value, id)
+    if (response.success) {
+      expandedDetail.value = response.data
+    } else {
+      error.value = response.message || 'Không thể tải chi tiết bài nộp'
+      expandedId.value = null
+    }
+  } catch (err) {
+    error.value = err.response?.data?.message || err.message || 'Lỗi khi tải chi tiết'
+    expandedId.value = null
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+onMounted(async () => {
+  await loadSurveyOptions()
+  if (selectedSurveyId.value) {
+    await Promise.all([loadQuestionLabels(), loadResponses()])
+  }
+})
 </script>
 
 <template>
   <div class="dashboard-page">
     <div class="page-heading">
-      <h2>Kết quả khảo sát</h2>
-      <p class="subtitle">Danh sách phiếu khảo sát từ người dùng</p>
+      <div>
+        <h2>Kết quả khảo sát</h2>
+        <p class="subtitle">Danh sách bài nộp theo phiếu khảo sát</p>
+      </div>
+
+      <label v-if="surveyOptions.length > 0" class="survey-picker">
+        <span>Phiếu khảo sát</span>
+        <select
+          v-model="selectedSurveyId"
+          :disabled="surveysLoading || loading"
+          @change="handleSurveyChange"
+        >
+          <option v-for="survey in surveyOptions" :key="survey.id" :value="survey.id">
+            {{ survey.title }}
+          </option>
+        </select>
+      </label>
     </div>
 
     <div v-if="error" class="alert alert-error">{{ error }}</div>
 
-    <div v-if="loading" class="loading-state">Đang tải dữ liệu...</div>
+    <div v-if="surveysLoading" class="loading-state">Đang tải danh sách phiếu...</div>
+
+    <div v-else-if="surveyOptions.length === 0" class="empty-state">
+      Chưa có phiếu khảo sát nào.
+    </div>
+
+    <div v-else-if="loading" class="loading-state">Đang tải dữ liệu...</div>
 
     <template v-else>
       <div class="stats-bar">
         <div class="stat-card">
-          <span class="stat-label">Tổng phiếu khảo sát</span>
+          <span class="stat-label">Tổng bài nộp</span>
           <span class="stat-value">{{ pagination.total }}</span>
         </div>
       </div>
 
-      <div v-if="surveys.length === 0" class="empty-state">
-        Chưa có phiếu khảo sát nào.
+      <div v-if="responses.length === 0" class="empty-state">
+        Chưa có bài nộp nào cho phiếu này.
       </div>
 
       <div v-else class="survey-list">
         <article
-          v-for="survey in surveys"
-          :key="survey.id"
+          v-for="response in responses"
+          :key="response.id"
           class="survey-card"
-          :class="{ expanded: expandedId === survey.id }"
+          :class="{ expanded: expandedId === response.id }"
         >
-          <button class="survey-summary" @click="toggleExpand(survey.id)">
+          <button class="survey-summary" @click="toggleExpand(response.id)">
             <div class="survey-info">
-              <span class="survey-id">#{{ survey.id }}</span>
-              <span class="survey-meta">{{ survey.q1 }} · {{ survey.q2 }} · {{ survey.q3 }}</span>
+              <span class="survey-id">#{{ response.id }}</span>
+              <span class="survey-meta">{{ getPreviewMeta(response) }}</span>
             </div>
             <div class="survey-right">
-              <time>{{ formatDate(survey.created_at) }}</time>
-              <span class="chevron">{{ expandedId === survey.id ? '▲' : '▼' }}</span>
+              <time>{{ formatDate(response.created_at) }}</time>
+              <span class="chevron">{{ expandedId === response.id ? '▲' : '▼' }}</span>
             </div>
           </button>
 
-          <div v-if="expandedId === survey.id" class="survey-detail">
-            <dl class="answer-list">
-              <div v-for="key in getQuestionKeys(survey)" :key="key" class="answer-row">
-                <dt>{{ SURVEY_QUESTIONS[key] || key }}</dt>
-                <dd>{{ formatAnswer(survey[key]) }}</dd>
+          <div v-if="expandedId === response.id" class="survey-detail">
+            <div v-if="detailLoading" class="detail-loading">Đang tải chi tiết...</div>
+            <dl v-else-if="expandedDetail" class="answer-list">
+              <div
+                v-for="item in getAnswerItems(expandedDetail)"
+                :key="item.fieldKey"
+                class="answer-row"
+              >
+                <dt>{{ getAnswerLabel(item) }}</dt>
+                <dd>{{ formatAnswer(item.answer) }}</dd>
               </div>
             </dl>
           </div>
         </article>
       </div>
 
-      <nav v-if="surveys.length > 0" class="pagination">
+      <nav v-if="responses.length > 0" class="pagination">
         <button
           class="btn-page"
           :disabled="pagination.page <= 1"
@@ -133,7 +273,12 @@ onMounted(() => loadSurveys())
 
 <style scoped>
 .page-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .page-heading h2 {
@@ -146,6 +291,32 @@ onMounted(() => loadSurveys())
   font-size: 0.9rem;
 }
 
+.survey-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.survey-picker span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.survey-picker select {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.survey-picker select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
 .alert {
   padding: 12px 16px;
   border-radius: 8px;
@@ -156,6 +327,7 @@ onMounted(() => loadSurveys())
   background: var(--color-error-bg);
   color: var(--color-error-text);
   border: 1px solid #fecaca;
+  margin-bottom: 16px;
 }
 
 .loading-state,
@@ -265,6 +437,13 @@ onMounted(() => loadSurveys())
   border-top: 1px solid var(--color-border);
   padding: 20px;
   background: #fafbfc;
+}
+
+.detail-loading {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  padding: 12px;
 }
 
 .answer-list {
